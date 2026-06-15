@@ -1,0 +1,9 @@
+streamlit
+opencv-python-headless
+pillow
+numpy
+pandas
+joblib
+matplotlib
+scikit-learn
+google-generativeai
