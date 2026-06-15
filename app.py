@@ -1,4 +1,3 @@
-```python
 """
 app.py — LettuceVision | Non-Contact Lettuce Yield Prediction System
 =====================================================================
