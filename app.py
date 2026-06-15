@@ -297,7 +297,9 @@ def get_ai_adjusted_weight(image_pil: Image.Image, ml_weight: float, pca_area: f
         # ── Retrieve API key from Streamlit Secrets (unchanged) ──
         GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=GEMINI_API_KEY)
-        vision_model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # ── FIXED: Using the latest model to avoid 404 errors ──
+        vision_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
         # ── Structured JSON prompt ──
         prompt = f"""
