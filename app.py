@@ -299,7 +299,7 @@ def get_ai_adjusted_weight(image_pil: Image.Image, ml_weight: float, pca_area: f
         genai.configure(api_key=GEMINI_API_KEY)
         
         # ── FIXED: Using the latest model to avoid 404 errors ──
-        vision_model = genai.GenerativeModel('gemini-1.5-flash')
+        vision_model = genai.GenerativeModel('gemini-1.5-pro')
 
         # ── Structured JSON prompt ──
         prompt = f"""
