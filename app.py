@@ -115,7 +115,7 @@ hr { border-color: #C8E6C9; }
 # ─────────────────────────────────────────────────────────────────────────────
 MODEL_PATH      = "lettuce_rf_model.pkl"
 REF_AREA_CM2    = 25.0       
-HARVEST_DAY     = 30
+DEFAULT_HARVEST_DAY = 30  # Default value, now can be overridden in UI
 
 @st.cache_resource(show_spinner="Loading Random Forest model …")
 def load_model():
@@ -229,11 +229,11 @@ def process_image_master(pil_img):
 # ─────────────────────────────────────────────────────────────────────────────
 # ML PREDICTION & HYBRID AI LOGIC (WITH SECRETS)
 # ─────────────────────────────────────────────────────────────────────────────
-def ml_predict_final_weight(model, days, area, temp, rh, ph, ec):
+def ml_predict_final_weight(model, days, area, temp, rh, ph, ec, target_harvest_day):
     X = pd.DataFrame({
         'Age_Days': [days], 'PCA_cm2': [area], 'Air_Temp_C': [temp],
         'Air_RH_pct': [rh], 'pH_Level': [ph], 'EC_mS_cm': [ec],
-        'Days_Until_Harvest': [max(0, HARVEST_DAY - days)]
+        'Days_Until_Harvest': [max(0, target_harvest_day - days)]
     })
     return max(float(model.predict(X)[0]), 1.0)
 
@@ -264,10 +264,10 @@ def get_ai_adjusted_weight(image_pil, ml_weight, pca_area):
         # API Key එක නැත්නම් හෝ වෙනත් Error එකක් ආවොත්, පරණ ML අගයම දෙනවා
         return ml_weight 
 
-def growth_forecast(current_day, predicted_final_weight, current_pca):
+def growth_forecast(current_day, predicted_final_weight, current_pca, target_harvest_day):
     """
     Dynamically calculates Current Weight based on actual PCA and Age.
-    Projects the logistic growth curve to the ML predicted Final Weight.
+    Projects the logistic growth curve to the ML predicted Final Weight based on target harvest day.
     """
     estimated_current_w = 18.0 + (current_pca * 0.18) + (current_day * 0.25)
     
@@ -281,7 +281,7 @@ def growth_forecast(current_day, predicted_final_weight, current_pca):
     t_mid = 15.0    
     
     raw_day_current = 1 / (1.0 + np.exp(-k * (current_day - t_mid)))
-    raw_harvest = 1 / (1.0 + np.exp(-k * (HARVEST_DAY - t_mid)))
+    raw_harvest = 1 / (1.0 + np.exp(-k * (target_harvest_day - t_mid)))
     
     def calc_weight(day):
         raw = 1 / (1.0 + np.exp(-k * (day - t_mid)))
@@ -290,9 +290,9 @@ def growth_forecast(current_day, predicted_final_weight, current_pca):
         return scaled_w
 
     current_w = calc_weight(current_day)
-    forecast = [(day, round(float(calc_weight(day)), 1)) for day in range(int(current_day), HARVEST_DAY + 1)]
+    forecast = [(day, round(float(calc_weight(day)), 1)) for day in range(int(current_day), int(target_harvest_day) + 1)]
     growth_remaining = round(predicted_final_weight - current_w, 1)
-    growth_rate      = round(growth_remaining / max(HARVEST_DAY - current_day, 1), 2)
+    growth_rate      = round(growth_remaining / max(target_harvest_day - current_day, 1), 2)
 
     return {
         "current_weight_g": round(current_w, 1),
@@ -310,13 +310,13 @@ def growth_forecast(current_day, predicted_final_weight, current_pca):
 # ─────────────────────────────────────────────────────────────────────────────
 # PLOT HELPERS 
 # ─────────────────────────────────────────────────────────────────────────────
-def plot_growth_forecast(current_day, current_weight, forecast_result):
+def plot_growth_forecast(current_day, current_weight, forecast_result, target_harvest_day):
     fig, ax = plt.subplots(figsize=(9, 4.5))
     fig.patch.set_facecolor("#F7FAF7")
     ax.set_facecolor("#FAFFFE")
 
     mp = forecast_result["model_params"]
-    days = np.linspace(0, HARVEST_DAY + 2, 400)
+    days = np.linspace(0, target_harvest_day + 2, 400)
     
     raw_w = 1 / (1.0 + np.exp(-mp["k"] * (days - mp["t_mid"])))
     hw_full = mp["W_start"] + ((raw_w - mp["raw_day_current"]) / (mp["raw_harvest"] - mp["raw_day_current"])) * (mp["W_target"] - mp["W_start"])
@@ -328,17 +328,17 @@ def plot_growth_forecast(current_day, current_weight, forecast_result):
     ax.scatter([current_day], [current_weight], color="#1565C0", s=140, zorder=5, label=f"Current: {current_weight:.1f} g")
 
     hw = forecast_result["harvest_weight_g"]
-    ax.scatter([HARVEST_DAY], [hw], marker="*", color="#B71C1C", s=250, zorder=5, label=f"Harvest (Day {HARVEST_DAY}): {hw:.1f} g")
+    ax.scatter([target_harvest_day], [hw], marker="*", color="#B71C1C", s=250, zorder=5, label=f"Harvest (Day {target_harvest_day}): {hw:.1f} g")
     
-    ax.axvline(HARVEST_DAY, color="#B71C1C", ls="--", lw=1, alpha=0.5)
-    ax.axvspan(28, 32, alpha=0.07, color="#F44336", label="Harvest window")
+    ax.axvline(target_harvest_day, color="#B71C1C", ls="--", lw=1, alpha=0.5)
+    ax.axvspan(target_harvest_day - 2, target_harvest_day + 2, alpha=0.07, color="#F44336", label="Harvest window")
 
     ax.set_xlabel("Days After Transplanting", fontsize=11)
     ax.set_ylabel("Fresh Weight (g)", fontsize=11)
     ax.set_title("Growth Trajectory Forecast", fontsize=12, fontweight="bold")
     ax.legend(fontsize=8.5, loc="upper left", framealpha=0.9)
     ax.grid(alpha=0.25)
-    ax.set_xlim(0, HARVEST_DAY + 3)
+    ax.set_xlim(0, target_harvest_day + 3)
     ax.set_ylim(0, max(hw_full.max(), hw) * 1.15)
     fig.tight_layout()
     return fig
@@ -446,7 +446,7 @@ if "Predict" in page:
     if model is None:
         st.error(f"⚠️ **Model not found.** Place `lettuce_rf_model.pkl` in `{os.getcwd()}`.")
 
-    # ── UPDATED FILE UPLOADER TO ACCEPT ZIP FILES ──
+    # ── FILE UPLOADER TO ACCEPT IMAGES OR ZIP FILES ──
     uploaded = st.file_uploader("Upload plant image (JPEG / PNG) or ZIP file for Batch", type=["jpg","jpeg","png","zip"])
 
     # ════════════════════════════════════════════════════════════════════════════
@@ -456,15 +456,21 @@ if "Predict" in page:
         st.markdown('<div class="sec-hdr">📦 Batch Processing Mode</div>', unsafe_allow_html=True)
         
         st.info("Set the environmental parameters that apply to ALL plants in this batch.")
-        c1, c2 = st.columns(2)
+        
+        # ── UPDATED: ADDED TARGET HARVEST DAY OPTION ──
+        c1, c2, c3 = st.columns(3)
         with c1:
-            days     = st.slider("Days After Transplanting", 1, 30, 20)
-            avg_temp = st.number_input("Temperature (°C)", 20.0, 45.0, 36.5, 0.1)
-            avg_ph   = st.number_input("pH", 4.5, 8.0, 6.0, 0.05)
+            b_days = st.number_input("Current Age (Days)", min_value=1, max_value=100, value=20, key="b_days")
+            b_temp = st.number_input("Temperature (°C)", 20.0, 45.0, 36.5, 0.1, key="b_temp")
         with c2:
-            avg_rh   = st.number_input("Relative Humidity (%)", 40.0, 100.0, 72.0, 0.5)
-            avg_ec   = st.number_input("EC (mS/cm)", 0.5, 4.0, 1.55, 0.05)
-            st.info(f"⏳ Target Harvest: Day {HARVEST_DAY}")
+            b_target_harvest = st.number_input("Target Harvest Day", min_value=1, max_value=100, value=30, key="b_harvest")
+            b_rh   = st.number_input("Relative Humidity (%)", 40.0, 100.0, 72.0, 0.5, key="b_rh")
+        with c3:
+            b_ph   = st.number_input("pH", 4.5, 8.0, 6.0, 0.05, key="b_ph")
+            b_ec   = st.number_input("EC (mS/cm)", 0.5, 4.0, 1.55, 0.05, key="b_ec")
+            
+        if b_days > b_target_harvest:
+            st.warning("⚠️ 'Current Age' is greater than 'Target Harvest Day'. Please adjust.")
 
         run_batch = st.button("🚀 Process Batch (ZIP)", disabled=(model is None))
 
@@ -488,10 +494,10 @@ if "Predict" in page:
                             img_data = zf.read(img_name)
                             pil_img = Image.open(io.BytesIO(img_data)).convert("RGB")
 
-                            # Run ML + AI Pipeline for each image
+                            # Run ML + AI Pipeline for each image (Passing dynamic harvest day)
                             img_res = process_image_master(pil_img)
                             pca_area = img_res["canopy_area_cm2"]
-                            ml_w = ml_predict_final_weight(model, days, pca_area, avg_temp, avg_rh, avg_ph, avg_ec)
+                            ml_w = ml_predict_final_weight(model, b_days, pca_area, b_temp, b_rh, b_ph, b_ec, b_target_harvest)
                             ai_w = get_ai_adjusted_weight(pil_img, ml_w, pca_area)
 
                             results.append({
@@ -532,7 +538,7 @@ if "Predict" in page:
                         ax.set_xticks(x)
                         ax.set_xticklabels(df["Filename"], rotation=45, ha='right', fontsize=8)
                         ax.set_ylabel("Harvest Weight (g)")
-                        ax.set_title("Predicted Weights per Plant")
+                        ax.set_title(f"Predicted Weights at Day {b_target_harvest}")
                         ax.legend()
                         ax.grid(axis='y', alpha=0.3)
                         fig.tight_layout()
@@ -550,7 +556,7 @@ if "Predict" in page:
                             st.download_button("📥 Download Chart as PNG", data=buf.getvalue(), file_name="lettuce_batch_chart.png", mime="image/png", use_container_width=True)
 
     # ════════════════════════════════════════════════════════════════════════════
-    # BRANCH 2: SINGLE IMAGE PROCESSING MODE (Original Code Preserved)
+    # BRANCH 2: SINGLE IMAGE PROCESSING MODE 
     # ════════════════════════════════════════════════════════════════════════════
     else:
         col_left, col_right = st.columns([1.05, 1], gap="large")
@@ -580,16 +586,22 @@ if "Predict" in page:
                 st.markdown('<div class="info-box">📌 No image uploaded — enter canopy area manually below.</div>', unsafe_allow_html=True)
                 canopy_area = st.number_input("Manual Canopy Area (cm²)", min_value=1.0, value=70.0)
 
-            st.markdown('<div class="sec-hdr" style="margin-top:18px">🌡️ Environmental Parameters</div>', unsafe_allow_html=True)
-            c1, c2 = st.columns(2)
+            st.markdown('<div class="sec-hdr" style="margin-top:18px">🌡️ Environmental & Growth Parameters</div>', unsafe_allow_html=True)
+            
+            # ── UPDATED: ADDED TARGET HARVEST DAY OPTION ──
+            c1, c2, c3 = st.columns(3)
             with c1:
-                days     = st.slider("Days After Transplanting", 1, 30, 20)
+                days = st.number_input("Current Age (Days)", min_value=1, max_value=100, value=20)
                 avg_temp = st.number_input("Temperature (°C)", 20.0, 45.0, 36.5, 0.1)
-                avg_ph   = st.number_input("pH", 4.5, 8.0, 6.0, 0.05)
             with c2:
+                target_harvest = st.number_input("Target Harvest Day", min_value=1, max_value=100, value=30)
                 avg_rh   = st.number_input("Relative Humidity (%)", 40.0, 100.0, 72.0, 0.5)
+            with c3:
+                avg_ph   = st.number_input("pH", 4.5, 8.0, 6.0, 0.05)
                 avg_ec   = st.number_input("EC (mS/cm)", 0.5, 4.0, 1.55, 0.05)
-                st.info(f"⏳ Target Harvest: Day {HARVEST_DAY}")
+                
+            if days > target_harvest:
+                st.warning("⚠️ 'Current Age' is greater than 'Target Harvest Day'. Please adjust.")
 
             env = {"Avg_Temp": avg_temp, "Avg_RH": avg_rh, "Avg_pH": avg_ph, "Avg_EC": avg_ec}
             predict_btn = st.button("🚀 Predict & Forecast", disabled=(model is None))
@@ -599,8 +611,8 @@ if "Predict" in page:
 
             if predict_btn:
                 with st.spinner("Running ML inference & Vision AI Correction …"):
-                    # 1. Base ML Prediction
-                    pred_ml_w = ml_predict_final_weight(model, days, canopy_area, avg_temp, avg_rh, avg_ph, avg_ec)
+                    # 1. Base ML Prediction (Passing dynamic harvest day)
+                    pred_ml_w = ml_predict_final_weight(model, days, canopy_area, avg_temp, avg_rh, avg_ph, avg_ec, target_harvest)
                     
                     # 2. Vision AI Adjustment (Overlapping leaves correction)
                     final_hw = pred_ml_w
@@ -608,11 +620,11 @@ if "Predict" in page:
                         final_hw = get_ai_adjusted_weight(pil_img, pred_ml_w, canopy_area)
                     
                     # 3. DYNAMIC PCA-BASED FORECAST IS CALLED HERE:
-                    fc = growth_forecast(days, final_hw, canopy_area)
+                    fc = growth_forecast(days, final_hw, canopy_area, target_harvest)
 
                 hw        = fc["harvest_weight_g"]
                 current_w = fc["current_weight_g"]
-                days_left = max(0, HARVEST_DAY - days)
+                days_left = max(0, target_harvest - days)
 
                 m1, m2, m3 = st.columns(3)
                 m1.metric("PCA (cm²)", f"{canopy_area:.1f}")
@@ -634,7 +646,7 @@ if "Predict" in page:
 
                 st.divider()
 
-                fig_fc = plot_growth_forecast(days, current_w, fc)
+                fig_fc = plot_growth_forecast(days, current_w, fc, target_harvest)
                 st.pyplot(fig_fc, use_container_width=True)
                 plt.close()
 
